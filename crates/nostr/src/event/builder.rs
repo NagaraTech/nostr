@@ -22,6 +22,7 @@ use crate::key::{self, Keys};
 #[cfg(feature = "nip04")]
 use crate::nips::nip04;
 use crate::nips::nip15::{ProductData, StallData};
+use crate::nips::nip3041::{PollData,VoteData};
 #[cfg(all(feature = "std", feature = "nip44"))]
 use crate::nips::nip44::{self, Version};
 #[cfg(all(feature = "std", feature = "nip46"))]
@@ -1074,6 +1075,17 @@ impl EventBuilder {
             Version::default(),
         )?;
         Ok(Self::new(Kind::Seal, content, []))
+    }
+
+    ///nip3041
+    pub fn build_poll(data: PollData) -> Self {
+        let tags: Vec<Tag> = data.into();
+        Self::new(Kind::Poll, "", tags)
+    }
+    pub fn build_vote(data: VoteData) -> Self {
+        let content = data.reason_for_voting.clone();
+        let tags: Vec<Tag> = data.into();
+        Self::new(Kind::Vote, content, tags)
     }
 
     /// Gift Wrap from seal

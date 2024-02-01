@@ -162,8 +162,8 @@ impl fmt::Display for Marker {
 }
 
 impl<S> From<S> for Marker
-where
-    S: Into<String>,
+    where
+        S: Into<String>,
 {
     fn from(s: S) -> Self {
         let s: String = s.into();
@@ -428,6 +428,9 @@ pub enum TagKind {
     Request,
     /// Custom tag kind
     Custom(String),
+    /// Poll (NIP3041)
+    Poll,
+    Vote,
 }
 
 impl fmt::Display for TagKind {
@@ -484,13 +487,15 @@ impl fmt::Display for TagKind {
             Self::Emoji => write!(f, "emoji"),
             Self::Request => write!(f, "request"),
             Self::Custom(tag) => write!(f, "{tag}"),
+            Self::Poll => write!(f, "poll"),
+            Self::Vote => write!(f, "poll_r"),
         }
     }
 }
 
 impl<S> From<S> for TagKind
-where
-    S: AsRef<str>,
+    where
+        S: AsRef<str>,
 {
     fn from(tag: S) -> Self {
         match tag.as_ref() {
@@ -544,6 +549,8 @@ where
             "proxy" => Self::Proxy,
             "emoji" => Self::Emoji,
             "request" => Self::Request,
+            "poll" => Self::Poll,
+            "poll_r" => Self::Vote,
             t => Self::Custom(t.to_owned()),
         }
     }
@@ -655,13 +662,30 @@ pub enum Tag {
         status: DataVendingMachineStatus,
         extra_info: Option<String>,
     },
+    ///nip3041
+    Poll {
+        /// <multi|single> allow others to reply with one or multiple options
+        multi_select: String,
+        /// LC(in depth|VLC) when surv expires,0 LC the uplimit of VLC(2M)
+        clock: String,
+        /// event name
+        title: String,
+        /// optional Poll & Vote information ("" if not present)
+        info: String,
+        /// array of string
+        options: Vec<String>,
+    },
+    Vote {
+        ///array of index of the option | the first option is 0
+        choices: Vec<String>,
+    },
 }
 
 impl Tag {
     /// Parse [`Tag`] from string vector
     pub fn parse<S>(data: Vec<S>) -> Result<Self, Error>
-    where
-        S: AsRef<str>,
+        where
+            S: AsRef<str>,
     {
         Tag::try_from(data)
     }
@@ -761,13 +785,15 @@ impl Tag {
             Self::Proxy { .. } => TagKind::Proxy,
             Self::Emoji { .. } => TagKind::Emoji,
             Self::Request(..) => TagKind::Request,
+            Self::Poll { .. } => TagKind::Poll,
+            Self::Vote { .. } => TagKind::Vote,
         }
     }
 }
 
 impl<S> TryFrom<Vec<S>> for Tag
-where
-    S: AsRef<str>,
+    where
+        S: AsRef<str>,
 {
     type Error = Error;
 
@@ -1049,10 +1075,23 @@ where
                 )),
             }
         } else {
-            Ok(Self::Generic(
-                tag_kind,
-                tag[1..].iter().map(|s| s.as_ref().to_owned()).collect(),
-            ))
+            match tag_kind {
+                TagKind::Poll => Ok(Self::Poll {
+                    multi_select: tag[1].as_ref().to_owned(),
+                    clock: tag[2].as_ref().to_owned(),
+                    title: tag[3].as_ref().to_owned(),
+                    info: tag[4].as_ref().to_owned(),
+                    options: tag[5..].iter().map(|s| s.as_ref().to_string() ).collect(),
+                }),
+                TagKind::Vote => Ok(Self::Vote {
+                    choices: tag[1..].iter().map(|s| s.as_ref().to_string() ).collect(),
+                }),
+
+                _ => Ok(Self::Generic(
+                    tag_kind,
+                    tag[1..].iter().map(|s| s.as_ref().to_owned()).collect(),
+                )),
+            }
         }
     }
 }
@@ -1274,14 +1313,36 @@ impl From<Tag> for Vec<String> {
                 }
                 tag
             }
+            Tag::Poll {
+                multi_select,
+                clock,
+                title,
+                info,
+                options
+            } => {
+                let mut tag = vec![TagKind::Poll.to_string(), multi_select, clock, title, info];
+                for i in options {
+                    tag.push(i);
+                }
+                tag
+            }
+            Tag::Vote {
+               choices
+            } => {
+                let mut tag = vec![TagKind::Vote.to_string()];
+                for i in choices {
+                    tag.push(i);
+                }
+                tag
+            }
         }
     }
 }
 
 impl Serialize for Tag {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
+        where
+            S: Serializer,
     {
         let data: Vec<String> = self.as_vec();
         let mut seq = serializer.serialize_seq(Some(data.len()))?;
@@ -1294,8 +1355,8 @@ impl Serialize for Tag {
 
 impl<'de> Deserialize<'de> for Tag {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
+        where
+            D: Deserializer<'de>,
     {
         type Data = Vec<String>;
         let vec: Vec<String> = Data::deserialize(deserializer)?;
@@ -1355,8 +1416,8 @@ pub struct Identity {
 impl Identity {
     /// New [`Identity`]
     pub fn new<S>(platform_iden: S, proof: S) -> Result<Self, Error>
-    where
-        S: Into<String>,
+        where
+            S: Into<String>,
     {
         let i: String = platform_iden.into();
         let (platform, ident) = i.rsplit_once(':').ok_or(Error::InvalidIdentity)?;
@@ -1415,7 +1476,7 @@ mod tests {
                 XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap()
+                    .unwrap()
             )
         );
     }
@@ -1425,7 +1486,7 @@ mod tests {
         let public_key = XOnlyPublicKey::from_str(
             "68d81165918100b7da43fc28f7d1fc12554466e1115886b9e7bb326f65ec4272",
         )
-        .unwrap();
+            .unwrap();
         let event = Event::new(
             EventId::from_str("378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7")
                 .unwrap(),
@@ -1434,7 +1495,7 @@ mod tests {
             Kind::EncryptedDirectMessage,
             [Tag::public_key(public_key)],
             "8y4MRYrb4ztvXO2NmsHvUA==?iv=MplZo7oSdPfH/vdMC8Hmwg==",
-            Signature::from_str("fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8").unwrap()
+            Signature::from_str("fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8").unwrap(),
         );
 
         let event_json: &str = r#"{"id":"378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7","pubkey":"79dff8f82963424e0bb02708a22e44b4980893e3a4be0fa3cb60a43b946764e3","created_at":1671739153,"kind":4,"tags":[["p","68d81165918100b7da43fc28f7d1fc12554466e1115886b9e7bb326f65ec4272"]],"content":"8y4MRYrb4ztvXO2NmsHvUA==?iv=MplZo7oSdPfH/vdMC8Hmwg==","sig":"fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8"}"#;
@@ -1452,29 +1513,29 @@ mod tests {
         assert_eq!(
             vec![
                 "p",
-                "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
+                "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
             ],
             Tag::public_key(
                 XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap()
+                    .unwrap()
             )
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec![
                 "e",
-                "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
+                "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
             ],
             Tag::event(
                 EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap()
+                    .unwrap()
             )
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1487,7 +1548,7 @@ mod tests {
             Tag::ContentWarning {
                 reason: Some(String::from("reason"))
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1499,9 +1560,9 @@ mod tests {
             vec!["client", "nostr-sdk"],
             Tag::Generic(
                 TagKind::Custom("client".to_string()),
-                vec!["nostr-sdk".to_string()]
+                vec!["nostr-sdk".to_string()],
             )
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1513,111 +1574,111 @@ mod tests {
             vec![
                 "p",
                 "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
-                "wss://relay.damus.io"
+                "wss://relay.damus.io",
             ],
             Tag::PublicKey {
                 public_key: XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
                 alias: None,
                 uppercase: false,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec![
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
-                ""
+                "",
             ],
             Tag::Event {
                 event_id: EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::empty()),
-                marker: None
+                marker: None,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec![
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
-                "wss://relay.damus.io"
+                "wss://relay.damus.io",
             ],
             Tag::Event {
                 event_id: EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
-                marker: None
+                marker: None,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec![
                 "p",
                 "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
-                "spam"
+                "spam",
             ],
             Tag::PubKeyReport(
                 XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
-                Report::Spam
+                    .unwrap(),
+                Report::Spam,
             )
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec![
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
-                "nudity"
+                "nudity",
             ],
             Tag::EventReport(
                 EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 Report::Nudity,
             )
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec!["nonce", "1", "20"],
             Tag::POW {
                 nonce: 1,
-                difficulty: 20
+                difficulty: 20,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
             vec![
                 "a",
                 "30023:a695f6b60119d9521934a691347d9f78e8770b56da16bb255ee286ddf9fda919:ipsum",
-                "wss://relay.nostr.org"
+                "wss://relay.nostr.org",
             ],
             Tag::A {
                 kind: Kind::LongFormTextNote,
                 public_key: XOnlyPublicKey::from_str(
                     "a695f6b60119d9521934a691347d9f78e8770b56da16bb255ee286ddf9fda919"
                 )
-                .unwrap(),
+                    .unwrap(),
                 identifier: String::from("ipsum"),
-                relay_url: Some(UncheckedUrl::from_str("wss://relay.nostr.org").unwrap())
+                relay_url: Some(UncheckedUrl::from_str("wss://relay.nostr.org").unwrap()),
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1631,12 +1692,12 @@ mod tests {
                 public_key: XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
                 marker: LiveEventMarker::Speaker,
-                proof: None
+                proof: None,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1650,12 +1711,12 @@ mod tests {
                 public_key: XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: None,
                 marker: LiveEventMarker::Participant,
-                proof: None
+                proof: None,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1669,12 +1730,12 @@ mod tests {
                 public_key: XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
                 alias: Some(String::from("alias")),
                 uppercase: false,
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1682,17 +1743,17 @@ mod tests {
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
                 "",
-                "reply"
+                "reply",
             ],
             Tag::Event {
                 event_id: EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: None,
-                marker: Some(Marker::Reply)
+                marker: Some(Marker::Reply),
             }
-            .as_vec()
+                .as_vec()
         );
 
         assert_eq!(
@@ -1702,10 +1763,14 @@ mod tests {
                 "kind=1",
                 "fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8",
             ],
-            Tag::Delegation { delegator: XOnlyPublicKey::from_str(
-                "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
-            ).unwrap(), conditions: Conditions::from_str("kind=1").unwrap(), sig: Signature::from_str("fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8").unwrap() }
-            .as_vec()
+            Tag::Delegation {
+                delegator: XOnlyPublicKey::from_str(
+                    "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
+                ).unwrap(),
+                conditions: Conditions::from_str("kind=1").unwrap(),
+                sig: Signature::from_str("fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8").unwrap(),
+            }
+                .as_vec()
         );
 
         assert_eq!(
@@ -1719,7 +1784,7 @@ mod tests {
                 "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
                 "wss://relay.damus.io",
                 "Host",
-                "a5d9290ef9659083c490b303eb7ee41356d8778ff19f2f91776c8dc4443388a64ffcf336e61af4c25c05ac3ae952d1ced889ed655b67790891222aaa15b99fdd"
+                "a5d9290ef9659083c490b303eb7ee41356d8778ff19f2f91776c8dc4443388a64ffcf336e61af4c25c05ac3ae952d1ced889ed655b67790891222aaa15b99fdd",
             ],
             Tag::PubKeyLiveEvent {
                 public_key: XOnlyPublicKey::from_str(
@@ -1727,9 +1792,9 @@ mod tests {
                 ).unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
                 marker: LiveEventMarker::Host,
-                proof: Some(Signature::from_str("a5d9290ef9659083c490b303eb7ee41356d8778ff19f2f91776c8dc4443388a64ffcf336e61af4c25c05ac3ae952d1ced889ed655b67790891222aaa15b99fdd").unwrap())
+                proof: Some(Signature::from_str("a5d9290ef9659083c490b303eb7ee41356d8778ff19f2f91776c8dc4443388a64ffcf336e61af4c25c05ac3ae952d1ced889ed655b67790891222aaa15b99fdd").unwrap()),
             }
-            .as_vec()
+                .as_vec()
         );
     }
 
@@ -1748,28 +1813,28 @@ mod tests {
         assert_eq!(
             Tag::parse(vec![
                 "p",
-                "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
+                "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::public_key(
                 XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap()
+                    .unwrap()
             )
         );
 
         assert_eq!(
             Tag::parse(vec![
                 "e",
-                "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
+                "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::event(
                 EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap()
+                    .unwrap()
             )
         );
 
@@ -1794,7 +1859,7 @@ mod tests {
             Tag::parse(vec!["client", "nostr-sdk"]).unwrap(),
             Tag::Generic(
                 TagKind::Custom("client".to_string()),
-                vec!["nostr-sdk".to_string()]
+                vec!["nostr-sdk".to_string()],
             )
         );
 
@@ -1804,12 +1869,12 @@ mod tests {
         );
 
         assert_eq!(
-            Tag::parse(vec!["r", "https://example.com",]).unwrap(),
-            Tag::Reference(String::from("https://example.com"),)
+            Tag::parse(vec!["r", "https://example.com"]).unwrap(),
+            Tag::Reference(String::from("https://example.com"))
         );
 
         assert_eq!(
-            Tag::parse(vec!["r", "wss://alicerelay.example.com",]).unwrap(),
+            Tag::parse(vec!["r", "wss://alicerelay.example.com"]).unwrap(),
             Tag::RelayMetadata(UncheckedUrl::from("wss://alicerelay.example.com"), None)
         );
 
@@ -1818,7 +1883,7 @@ mod tests {
             Tag::ExternalIdentity(Identity {
                 platform: ExternalIdentity::GitHub,
                 ident: "12345678".to_string(),
-                proof: "abcdefghijklmnop".to_string()
+                proof: "abcdefghijklmnop".to_string(),
             })
         );
 
@@ -1826,17 +1891,17 @@ mod tests {
             Tag::parse(vec![
                 "p",
                 "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
-                "wss://relay.damus.io"
+                "wss://relay.damus.io",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::PublicKey {
                 public_key: XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
                 alias: None,
-                uppercase: false
+                uppercase: false,
             }
         );
 
@@ -1844,16 +1909,16 @@ mod tests {
             Tag::parse(vec![
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
-                ""
+                "",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::Event {
                 event_id: EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::empty()),
-                marker: None
+                marker: None,
             }
         );
 
@@ -1861,16 +1926,16 @@ mod tests {
             Tag::parse(vec![
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
-                "wss://relay.damus.io"
+                "wss://relay.damus.io",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::Event {
                 event_id: EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
-                marker: None
+                marker: None,
             }
         );
 
@@ -1878,15 +1943,15 @@ mod tests {
             Tag::parse(vec![
                 "p",
                 "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d",
-                "impersonation"
+                "impersonation",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::PubKeyReport(
                 XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
-                Report::Impersonation
+                    .unwrap(),
+                Report::Impersonation,
             )
         );
 
@@ -1894,15 +1959,15 @@ mod tests {
             Tag::parse(vec![
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
-                "profanity"
+                "profanity",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::EventReport(
                 EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
-                Report::Profanity
+                    .unwrap(),
+                Report::Profanity,
             )
         );
 
@@ -1910,7 +1975,7 @@ mod tests {
             Tag::parse(vec!["nonce", "1", "20"]).unwrap(),
             Tag::POW {
                 nonce: 1,
-                difficulty: 20
+                difficulty: 20,
             }
         );
 
@@ -1918,17 +1983,17 @@ mod tests {
             Tag::parse(vec![
                 "a",
                 "30023:a695f6b60119d9521934a691347d9f78e8770b56da16bb255ee286ddf9fda919:ipsum",
-                "wss://relay.nostr.org"
+                "wss://relay.nostr.org",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::A {
                 kind: Kind::LongFormTextNote,
                 public_key: XOnlyPublicKey::from_str(
                     "a695f6b60119d9521934a691347d9f78e8770b56da16bb255ee286ddf9fda919"
                 )
-                .unwrap(),
+                    .unwrap(),
                 identifier: String::from("ipsum"),
-                relay_url: Some(UncheckedUrl::from_str("wss://relay.nostr.org").unwrap())
+                relay_url: Some(UncheckedUrl::from_str("wss://relay.nostr.org").unwrap()),
             }
         );
 
@@ -1936,7 +2001,7 @@ mod tests {
             Tag::parse(vec!["r", "wss://alicerelay.example.com", "read"]).unwrap(),
             Tag::RelayMetadata(
                 UncheckedUrl::from("wss://alicerelay.example.com"),
-                Some(RelayMetadata::Read)
+                Some(RelayMetadata::Read),
             )
         );
 
@@ -1947,12 +2012,12 @@ mod tests {
                 "wss://relay.damus.io",
                 "alias",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::PublicKey {
                 public_key: XOnlyPublicKey::from_str(
                     "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: Some(UncheckedUrl::from("wss://relay.damus.io")),
                 alias: Some(String::from("alias")),
                 uppercase: false,
@@ -1964,16 +2029,16 @@ mod tests {
                 "e",
                 "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7",
                 "",
-                "reply"
+                "reply",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::Event {
                 event_id: EventId::from_hex(
                     "378f145897eea948952674269945e88612420db35791784abf0616b4fed56ef7"
                 )
-                .unwrap(),
+                    .unwrap(),
                 relay_url: None,
-                marker: Some(Marker::Reply)
+                marker: Some(Marker::Reply),
             }
         );
 
@@ -1984,9 +2049,13 @@ mod tests {
                 "kind=1",
                 "fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8",
             ]).unwrap(),
-            Tag::Delegation { delegator: XOnlyPublicKey::from_str(
-                "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
-            ).unwrap(), conditions: Conditions::from_str("kind=1").unwrap(), sig: Signature::from_str("fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8").unwrap() }
+            Tag::Delegation {
+                delegator: XOnlyPublicKey::from_str(
+                    "13adc511de7e1cfcf1c6b7f6365fb5a03442d7bcacf565ea57fa7770912c023d"
+                ).unwrap(),
+                conditions: Conditions::from_str("kind=1").unwrap(),
+                sig: Signature::from_str("fd0954de564cae9923c2d8ee9ab2bf35bc19757f8e328a978958a2fcc950eaba0754148a203adec29b7b64080d0cf5a32bebedd768ea6eb421a6b751bb4584a8").unwrap(),
+            }
         );
 
         assert_eq!(
@@ -1995,14 +2064,14 @@ mod tests {
                 "wss://relay.damus.io/",
                 "wss://nostr-relay.wlvs.space/",
                 "wss://nostr.fmt.wiz.biz",
-                "wss//nostr.fmt.wiz.biz"
+                "wss//nostr.fmt.wiz.biz",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::Relays(vec![
                 UncheckedUrl::from("wss://relay.damus.io/"),
                 UncheckedUrl::from("wss://nostr-relay.wlvs.space/"),
                 UncheckedUrl::from("wss://nostr.fmt.wiz.biz"),
-                UncheckedUrl::from("wss//nostr.fmt.wiz.biz")
+                UncheckedUrl::from("wss//nostr.fmt.wiz.biz"),
             ])
         );
 
@@ -2010,15 +2079,15 @@ mod tests {
             Tag::parse(vec![
                 "bolt11",
                 "lnbc10u1p3unwfusp5t9r3yymhpfqculx78u027lxspgxcr2n2987mx2j55nnfs95nxnzqpp5jmrh92pfld78spqs78v9euf2385t83uvpwk9ldrlvf6ch7tpascqhp5zvkrmemgth3tufcvflmzjzfvjt023nazlhljz2n9hattj4f8jq8qxqyjw5qcqpjrzjqtc4fc44feggv7065fqe5m4ytjarg3repr5j9el35xhmtfexc42yczarjuqqfzqqqqqqqqlgqqqqqqgq9q9qxpqysgq079nkq507a5tw7xgttmj4u990j7wfggtrasah5gd4ywfr2pjcn29383tphp4t48gquelz9z78p4cq7ml3nrrphw5w6eckhjwmhezhnqpy6gyf0"]).unwrap(),
-                Tag::Bolt11("lnbc10u1p3unwfusp5t9r3yymhpfqculx78u027lxspgxcr2n2987mx2j55nnfs95nxnzqpp5jmrh92pfld78spqs78v9euf2385t83uvpwk9ldrlvf6ch7tpascqhp5zvkrmemgth3tufcvflmzjzfvjt023nazlhljz2n9hattj4f8jq8qxqyjw5qcqpjrzjqtc4fc44feggv7065fqe5m4ytjarg3repr5j9el35xhmtfexc42yczarjuqqfzqqqqqqqqlgqqqqqqgq9q9qxpqysgq079nkq507a5tw7xgttmj4u990j7wfggtrasah5gd4ywfr2pjcn29383tphp4t48gquelz9z78p4cq7ml3nrrphw5w6eckhjwmhezhnqpy6gyf0".to_string())
+            Tag::Bolt11("lnbc10u1p3unwfusp5t9r3yymhpfqculx78u027lxspgxcr2n2987mx2j55nnfs95nxnzqpp5jmrh92pfld78spqs78v9euf2385t83uvpwk9ldrlvf6ch7tpascqhp5zvkrmemgth3tufcvflmzjzfvjt023nazlhljz2n9hattj4f8jq8qxqyjw5qcqpjrzjqtc4fc44feggv7065fqe5m4ytjarg3repr5j9el35xhmtfexc42yczarjuqqfzqqqqqqqqlgqqqqqqgq9q9qxpqysgq079nkq507a5tw7xgttmj4u990j7wfggtrasah5gd4ywfr2pjcn29383tphp4t48gquelz9z78p4cq7ml3nrrphw5w6eckhjwmhezhnqpy6gyf0".to_string())
         );
 
         assert_eq!(
             Tag::parse(vec![
                 "preimage",
-                "5d006d2cf1e73c7148e7519a4c68adc81642ce0e25a432b2434c99f97344c15f"
+                "5d006d2cf1e73c7148e7519a4c68adc81642ce0e25a432b2434c99f97344c15f",
             ])
-            .unwrap(),
+                .unwrap(),
             Tag::Preimage(
                 "5d006d2cf1e73c7148e7519a4c68adc81642ce0e25a432b2434c99f97344c15f".to_string()
             )
@@ -2027,7 +2096,7 @@ mod tests {
         assert_eq!(
             Tag::parse(vec![
                 "description",
-                "{\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"content\":\"\",\"id\":\"d9cc14d50fcb8c27539aacf776882942c1a11ea4472f8cdec1dea82fab66279d\",\"created_at\":1674164539,\"sig\":\"77127f636577e9029276be060332ea565deaf89ff215a494ccff16ae3f757065e2bc59b2e8c113dd407917a010b3abd36c8d7ad84c0e3ab7dab3a0b0caa9835d\",\"kind\":9734,\"tags\":[[\"e\",\"3624762a1274dd9636e0c552b53086d70bc88c165bc4dc0f9e836a1eaf86c3b8\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"relays\",\"wss://relay.damus.io\",\"wss://nostr-relay.wlvs.space\",\"wss://nostr.fmt.wiz.biz\",\"wss://relay.nostr.bg\",\"wss://nostr.oxtr.dev\",\"wss://nostr.v0l.io\",\"wss://brb.io\",\"wss://nostr.bitcoiner.social\",\"ws://monad.jb55.com:8080\",\"wss://relay.snort.social\"]]}"
+                "{\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"content\":\"\",\"id\":\"d9cc14d50fcb8c27539aacf776882942c1a11ea4472f8cdec1dea82fab66279d\",\"created_at\":1674164539,\"sig\":\"77127f636577e9029276be060332ea565deaf89ff215a494ccff16ae3f757065e2bc59b2e8c113dd407917a010b3abd36c8d7ad84c0e3ab7dab3a0b0caa9835d\",\"kind\":9734,\"tags\":[[\"e\",\"3624762a1274dd9636e0c552b53086d70bc88c165bc4dc0f9e836a1eaf86c3b8\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"relays\",\"wss://relay.damus.io\",\"wss://nostr-relay.wlvs.space\",\"wss://nostr.fmt.wiz.biz\",\"wss://relay.nostr.bg\",\"wss://nostr.oxtr.dev\",\"wss://nostr.v0l.io\",\"wss://brb.io\",\"wss://nostr.bitcoiner.social\",\"ws://monad.jb55.com:8080\",\"wss://relay.snort.social\"]]}",
             ]).unwrap(),
             Tag::Description("{\"pubkey\":\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\",\"content\":\"\",\"id\":\"d9cc14d50fcb8c27539aacf776882942c1a11ea4472f8cdec1dea82fab66279d\",\"created_at\":1674164539,\"sig\":\"77127f636577e9029276be060332ea565deaf89ff215a494ccff16ae3f757065e2bc59b2e8c113dd407917a010b3abd36c8d7ad84c0e3ab7dab3a0b0caa9835d\",\"kind\":9734,\"tags\":[[\"e\",\"3624762a1274dd9636e0c552b53086d70bc88c165bc4dc0f9e836a1eaf86c3b8\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"relays\",\"wss://relay.damus.io\",\"wss://nostr-relay.wlvs.space\",\"wss://nostr.fmt.wiz.biz\",\"wss://relay.nostr.bg\",\"wss://nostr.oxtr.dev\",\"wss://nostr.v0l.io\",\"wss://brb.io\",\"wss://nostr.bitcoiner.social\",\"ws://monad.jb55.com:8080\",\"wss://relay.snort.social\"]]}".to_string())
         );
@@ -2036,7 +2105,7 @@ mod tests {
             Tag::parse(vec!["amount", "10000"]).unwrap(),
             Tag::Amount {
                 millisats: 10_000,
-                bolt11: None
+                bolt11: None,
             }
         );
     }

@@ -140,6 +140,9 @@ pub enum Kind {
     ParameterizedReplaceable(u16),
     /// Custom
     Custom(u64),
+    ///NIP3041
+    Poll,
+    Vote,
 }
 
 impl PartialEq<Kind> for Kind {
@@ -254,6 +257,8 @@ impl From<u64> for Kind {
             47 => Self::PublicChatReserved47,
             48 => Self::PublicChatReserved48,
             49 => Self::PublicChatReserved49,
+            301 => Self::Poll,
+            309 => Self::Vote,
             13194 => Self::WalletConnectInfo,
             1984 => Self::Reporting,
             9733 => Self::ZapPrivateMessage,
@@ -318,6 +323,8 @@ impl From<Kind> for u64 {
             Kind::PublicChatReserved47 => 47,
             Kind::PublicChatReserved48 => 48,
             Kind::PublicChatReserved49 => 49,
+            Kind::Poll => 301,
+            Kind::Vote => 309,
             Kind::WalletConnectInfo => 13194,
             Kind::Reporting => 1984,
             Kind::ZapPrivateMessage => 9733,

@@ -39,3 +39,4 @@ pub mod nip65;
 pub mod nip90;
 pub mod nip94;
 pub mod nip98;
+pub mod nip3041;
