@@ -8,13 +8,14 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use base64::write::StrConsumer;
 
 use negentropy::{Bytes, Negentropy};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
 use super::{Filter, MessageHandleError, SubscriptionId};
-use crate::{Event, JsonUtil};
+use crate::{Event, EventId, JsonUtil};
 
 /// Messages sent by clients, received by relays
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,12 +65,18 @@ pub enum ClientMessage {
         /// Subscription ID
         subscription_id: SubscriptionId,
     },
+    ///nip3041
+    Query {
+        /// Specific SID
+        specific_sid: EventId,
+    },
+    Query_SID
 }
 
 impl Serialize for ClientMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
+        where
+            S: Serializer,
     {
         let json_value: Value = self.as_value();
         json_value.serialize(serializer)
@@ -78,8 +85,8 @@ impl Serialize for ClientMessage {
 
 impl<'de> Deserialize<'de> for ClientMessage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
+        where
+            D: Deserializer<'de>,
     {
         let json_value = Value::deserialize(deserializer)?;
         ClientMessage::from_value(json_value).map_err(serde::de::Error::custom)
@@ -105,6 +112,13 @@ impl ClientMessage {
         Self::Count {
             subscription_id,
             filters,
+        }
+    }
+
+    /// Create `COUNT` message
+    pub fn query(specific_sid: EventId) -> Self {
+        Self::Query {
+            specific_sid,
         }
     }
 
@@ -203,6 +217,9 @@ impl ClientMessage {
                 message,
             } => json!(["NEG-MSG", subscription_id, message]),
             Self::NegClose { subscription_id } => json!(["NEG-CLOSE", subscription_id]),
+            ///nip3041 query event id
+            Self::Query { specific_sid } => json!(["QUERY", specific_sid]),
+            Self::Query_SID => json!(["Query_SID"])
         }
     }
 
@@ -329,6 +346,17 @@ impl ClientMessage {
             }
         }
 
+
+        ///nip3041 query event id
+        if v[0] == "QUERY" {
+            if v_len >= 2 {
+                let specific_sid: EventId = serde_json::from_value(v[1].clone())?;
+                return Ok(Self::Query { specific_sid });
+            } else {
+                return Err(MessageHandleError::InvalidMessageFormat);
+            }
+        }
+
         Err(MessageHandleError::InvalidMessageFormat)
     }
 }
@@ -340,8 +368,8 @@ impl JsonUtil for ClientMessage {
     ///
     /// **This method NOT verify the event signature!**
     fn from_json<T>(json: T) -> Result<Self, Self::Err>
-    where
-        T: AsRef<[u8]>,
+        where
+            T: AsRef<[u8]>,
     {
         let msg: &[u8] = json.as_ref();
 
@@ -356,7 +384,6 @@ impl JsonUtil for ClientMessage {
 
 #[cfg(test)]
 mod tests {
-
     use core::str::FromStr;
 
     use bitcoin::secp256k1::XOnlyPublicKey;
@@ -369,7 +396,7 @@ mod tests {
         let pk = XOnlyPublicKey::from_str(
             "379e863e8357163b5bce5d2688dc4f1dcc2d505222fb8d74db600f30535dfdfe",
         )
-        .unwrap();
+            .unwrap();
         let filters = vec![
             Filter::new().kind(Kind::EncryptedDirectMessage),
             Filter::new().pubkey(pk),
@@ -387,7 +414,7 @@ mod tests {
         let pk = XOnlyPublicKey::from_str(
             "379e863e8357163b5bce5d2688dc4f1dcc2d505222fb8d74db600f30535dfdfe",
         )
-        .unwrap();
+            .unwrap();
         let filters = vec![
             Filter::new().kind(Kind::Custom(22)),
             Filter::new().pubkey(pk),

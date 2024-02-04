@@ -66,7 +66,7 @@ pub struct VoteData {
 }
 
 impl VoteData {
-    /// Create a new poll
+    /// Create a new vote
     pub fn new(ev_id:EventId,choices: &Vec<String>, reason: String) -> Self {
         Self {
             event_id: ev_id,
